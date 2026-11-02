@@ -1,0 +1,25 @@
+# Build and generated distribution files
+**/bin/
+**/obj/
+/publish/
+/publish-v2/
+/installer/
+*.zip
+*.log
+
+# Local IDE settings
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Local secrets and runtime data
+.env
+.env.*
+*.pfx
+*.p12
+*.key
+/plans.json
+/settings.json

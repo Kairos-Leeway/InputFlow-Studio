@@ -1,0 +1,1 @@
+namespace InputFlowStudio; public partial class App:System.Windows.Application {}

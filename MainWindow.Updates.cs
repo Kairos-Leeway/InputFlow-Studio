@@ -29,7 +29,6 @@ public partial class MainWindow
         };
     }
 
-    async void CheckUpdates(object sender, RoutedEventArgs args) => await CheckForUpdatesAsync(true);
 
     async Task<string> CheckForUpdatesAsync(bool manual, bool deferPrompt = false)
     {

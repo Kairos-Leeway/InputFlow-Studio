@@ -52,8 +52,10 @@ public class MainViewModel : INotifyPropertyChanged {
  public string EmptyHint=>Selected?.Steps.Count>0?"没有匹配的步骤，请切换全部步骤或清空搜索":$"添加步骤，或按 {Settings.Record} 开始录制";
  public string StateText=>IsCountingDown?$"正在准备录制 · {Settings.Stop} 取消":Engine.State switch {EngineState.Recording=>$"录制中 · {Settings.Record} 完成，{Settings.Stop} 紧急停止",EngineState.Running=>$"运行中 · {Settings.Run} 停止，{Settings.Pause} 暂停",EngineState.Paused=>$"已暂停 · {Settings.Pause} 恢复，{Settings.Run} 停止",EngineState.Stopping=>"正在停止并释放鼠标按键…",_=>"就绪"};
  public ICollectionView? StepsView {get;private set;}
+ bool executionExpanded=true;
+ public bool IsExecutionExpanded {get=>executionExpanded;set{executionExpanded=value;Notify(nameof(IsExecutionExpanded));}}
  Step? selectedStep;
- public Step? SelectedStep {get=>selectedStep;set{selectedStep=value;Notify(nameof(SelectedStep));Notify(nameof(CanUndo));Notify(nameof(CanEditStep));Notify(nameof(CanRestoreStep));}}
+ public Step? SelectedStep {get=>selectedStep;set{selectedStep=value;IsExecutionExpanded=value==null;Notify(nameof(SelectedStep));Notify(nameof(CanUndo));Notify(nameof(CanEditStep));Notify(nameof(CanRestoreStep));}}
  public string[] FilterOptions {get;}={"全部步骤","关键操作（隐藏移动）","鼠标点击 / 按下释放","等待 / 滚轮","仅键盘"};
  int filterIndex=1;string search="";
  public int FilterIndex {get=>filterIndex;set{filterIndex=value;Notify(nameof(FilterIndex));RefreshView();}}
@@ -130,7 +132,7 @@ public class MainViewModel : INotifyPropertyChanged {
  public void UndoEdit(){if(!CanUndo||Selected==null)return;var id=SelectedStep?.Id;Edits.Undo(Selected);SelectedStep=Selected.Steps.FirstOrDefault(s=>s.Id==id);}
  public void RestoreCurrentStep(){if(!CanEdit||Selected==null||SelectedStep==null)return;var step=SelectedStep;Edits.RestoreStep(Selected,step);if(!Selected.Steps.Contains(step))SelectedStep=null;}
  public void RestoreCurrentPlan(){if(!CanEdit||Selected==null)return;var error=NameError(Edits.SavedCopy(Selected).Name,Selected);if(error!=null)throw new ArgumentException(error);Edits.RestorePlan(Selected);SelectedStep=null;}
- public void RestoreField(string scope,string property){if(!CanEdit||Selected==null)return;if(scope=="Step"&&property=="Keyboard"){Edits.Edit(Selected,()=>{foreach(string key in new[]{nameof(Step.KeyCode),nameof(Step.KeyModifiers),nameof(Step.ScanCode),nameof(Step.Extended)})Edits.RestoreField(Selected,SelectedStep,key);});}else Edits.RestoreField(Selected,scope=="Step"?SelectedStep:null,property);}
+ public void RestoreField(string scope,string property){if(Selected!=null&&scope=="Plan"&&property==nameof(Plan.Speed)&&CanChangeSpeed){PlaybackSpeed=Edits.SavedCopy(Selected).Speed;return;}if(!CanEdit||Selected==null)return;if(scope=="Step"&&property=="Keyboard"){Edits.Edit(Selected,()=>{foreach(string key in new[]{nameof(Step.KeyCode),nameof(Step.KeyModifiers),nameof(Step.ScanCode),nameof(Step.Extended)})Edits.RestoreField(Selected,SelectedStep,key);});}else Edits.RestoreField(Selected,scope=="Step"?SelectedStep:null,property);}
  public void SetKeyboardKey(int code,int modifiers){if(!CanEdit||Selected==null||SelectedStep==null)return;var step=SelectedStep;Edits.Edit(Selected,()=>{step.KeyCode=code;step.KeyModifiers=modifiers;step.ScanCode=0;step.Extended=false;});}
  public void PickCoordinates(int x,int y){if(!CanEdit||Selected==null||SelectedStep==null)return;var step=SelectedStep;Edits.Edit(Selected,()=>{step.X=x;step.Y=y;});}
 }

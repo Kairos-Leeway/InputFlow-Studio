@@ -23,13 +23,13 @@ public partial class MainWindow : Window {
  public MainWindow():this(new MainViewModel(),null,true,AppSettings.Load()){}
  public MainWindow(MainViewModel model,RecordingPreparation? preparation=null,bool showRecordingUi=true,AppSettings? settings=null,IPlanDialogs? dialogs=null){
   vm=model;this.preparation=preparation??new();this.showRecordingUi=showRecordingUi;this.dialogs=dialogs??new PlanDialogs(this,()=>vm.Settings.Theme=="浅色");
-  InitializeComponent();vm.ApplySettings(settings??new());SetTheme(vm.Settings.Theme=="浅色",false);DataContext=vm;Kinds.ItemsSource=Enum.GetValues<ActionKind>();
+  InitializeComponent();vm.ApplySettings(settings??new());SetTheme(vm.Settings.Theme=="浅色",false);DataContext=vm;Kinds.ItemsSource=Enum.GetValues<ActionKind>();InitializeUpdates();
   vm.Engine.StateChanged+=()=>{if(Dispatcher.CheckAccess())EngineChanged();else Dispatcher.InvokeAsync(EngineChanged);};
   noticeTimer.Tick+=(_,_)=>{Notice.Visibility=Visibility.Collapsed;noticeTimer.Stop();};
   SourceInitialized+=(_,_)=>{if(showRecordingUi)tray=new TrayService(()=>Dispatcher.InvokeAsync(ShowMain),()=>Dispatcher.InvokeAsync(Close));handle=new WindowInteropHelper(this).Handle;HwndSource.FromHwnd(handle).AddHook(Hook);hotkeys=new(new NativeHotkeyRegistry(handle));Bind();try{hotkeyGate=new HotkeyOriginGate(()=>hotkeys.Active,emergencyStop:()=>Dispatcher.InvokeAsync(()=>Stop(this,new RoutedEventArgs())));}catch(Exception ex){ShowNotice(ex.Message,true);}};
   Closing+=ClosingWindow;
  }
- void ClosingWindow(object? sender,System.ComponentModel.CancelEventArgs e){closing=true;preparation.Cancel();try{InputValidation.Commit(this);vm.Engine.Dispose();PersistRecording();if(vm.AnyUnsaved){var choice=Ask(()=>dialogs.ResolveUnsaved("退出",vm.Plans.Count(p=>p.IsDirty),true));if(choice==UnsavedDecision.Cancel){e.Cancel=true;closing=false;ShowMain();return;}if(choice==UnsavedDecision.Save)vm.SaveAll();}overlay?.Close();overlay=null;hotkeyGate?.Dispose();hotkeys?.Dispose();tray?.Dispose();noticeTimer.Stop();}catch(Exception ex){e.Cancel=true;closing=false;ShowMain();ShowNotice("退出前保存失败，应用已保留打开："+ex.Message,true);}}
+ void ClosingWindow(object? sender,System.ComponentModel.CancelEventArgs e){lastCloseFailed=false;closing=true;preparation.Cancel();try{InputValidation.Commit(this);vm.Engine.Dispose();PersistRecording();if(vm.AnyUnsaved){var choice=Ask(()=>dialogs.ResolveUnsaved("退出",vm.Plans.Count(p=>p.IsDirty),true));if(choice==UnsavedDecision.Cancel){e.Cancel=true;closing=false;ShowMain();return;}if(choice==UnsavedDecision.Save)vm.SaveAll();}overlay?.Close();overlay=null;hotkeyGate?.Dispose();hotkeys?.Dispose();tray?.Dispose();noticeTimer.Stop();}catch(Exception ex){lastCloseFailed=true;e.Cancel=true;closing=false;ShowMain();ShowNotice("退出前保存失败，应用已保留打开："+ex.Message,true);}}
  void ShowMain(){if(closing)return;if(WindowState==WindowState.Minimized)WindowState=WindowState.Normal;if(!IsVisible)Show();Activate();}
  void ShowNotice(string text,bool error=false){Status.Text=text;NoticeText.Text=text;Notice.SetResourceReference(System.Windows.Controls.Border.BorderBrushProperty,error?"RecordInk":"Accent");Notice.Visibility=Visibility.Visible;noticeTimer.Stop();noticeTimer.Start();}
  void DismissNotice(object s,RoutedEventArgs e){Notice.Visibility=Visibility.Collapsed;noticeTimer.Stop();}
@@ -88,13 +88,13 @@ public partial class MainWindow : Window {
  void EndKeyCapture(object s,System.Windows.Input.KeyboardFocusChangedEventArgs e){try{hotkeys?.Resume();}catch(Exception ex){ShowNotice(ex.Message,true);}}
  void PreviousImportant(object s,RoutedEventArgs e)=>Navigate(-1);void NextImportant(object s,RoutedEventArgs e)=>Navigate(1);
  void Navigate(int direction){var step=vm.NavigateImportant(direction);if(step!=null)Steps.ScrollIntoView(step);else Status.Text=direction>0?"已到最后一个匹配的关键操作":"已到第一个匹配的关键操作";}
- void Settings(object s,RoutedEventArgs e){if(!vm.CanEdit)return;hotkeys?.Suspend();try{
+ void Settings(object s,RoutedEventArgs e){if(!vm.CanEdit)return;hotkeys?.Suspend();modalOpen=true;try{
   var dialog=new SettingsWindow(vm.Settings,vm.Selected,(candidate,planShortcut)=>{
-   var old=vm.Settings;var plan=vm.Selected;var oldShortcut=plan?.Shortcut;
+   var old=vm.Settings;candidate.LastUpdateCheckUtc=old.LastUpdateCheckUtc;candidate.SkippedUpdateVersion=old.SkippedUpdateVersion;var plan=vm.Selected;var oldShortcut=plan?.Shortcut;
    try{if(plan!=null)vm.Edits.WithoutHistory(plan,()=>plan.Shortcut=planShortcut);HotkeyManager.Build(candidate,vm.Plans);hotkeys?.Apply(candidate,vm.Plans);candidate.Save();if(plan!=null)vm.SaveShortcut(plan,planShortcut);vm.ApplySettings(candidate);SetTheme(candidate.Theme=="浅色",false);}
    catch{if(plan!=null)vm.Edits.WithoutHistory(plan,()=>plan.Shortcut=oldShortcut);try{hotkeys?.Apply(old,vm.Plans);old.Save();}finally{hotkeys?.Suspend();}throw;}
-  }){Owner=this};dialog.ShowDialog();
- }catch(Exception ex){Status.Text=ex.Message;}finally{try{hotkeys?.Resume();}catch(Exception ex){Status.Text=ex.Message;}}}
+  },()=>CheckForUpdatesAsync(true,true)){Owner=this};dialog.ShowDialog();
+ }catch(Exception ex){Status.Text=ex.Message;}finally{modalOpen=false;try{hotkeys?.Resume();}catch(Exception ex){Status.Text=ex.Message;}TryShowUpdate();}}
  void SetTheme(bool light,bool save=true){ThemeService.Apply(Resources,light);}
  void Import(object s,RoutedEventArgs e){if(!vm.CanEdit)return;var dialog=new OpenFileDialog{Filter="JSON|*.json"};if(dialog.ShowDialog()!=true)return;try{var plan=JsonSerializer.Deserialize<Plan>(System.IO.File.ReadAllText(dialog.FileName))??throw new Exception("无效方案");plan.HotKey=0;plan.Shortcut="";vm.AddPlan(plan);ShowNotice($"已导入“{plan.Name}”");}catch(Exception ex){Status.Text=ex.Message;}}
  void Export(object s,RoutedEventArgs e){var dialog=new SaveFileDialog{Filter="JSON|*.json",FileName="方案.json"};if(vm.Selected!=null&&dialog.ShowDialog()==true)try{System.IO.File.WriteAllText(dialog.FileName,JsonSerializer.Serialize(vm.Selected,new JsonSerializerOptions{WriteIndented=true}));}catch(Exception ex){Status.Text=ex.Message;}}

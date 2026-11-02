@@ -1,4 +1,4 @@
-#define MyAppVersion "2.0.1"
+#define MyAppVersion "2.1.0"
 [Setup]
 AppId={{39D59D48-BCB8-43F4-8824-0059BE653B56}
 AppName=InputFlow Studio

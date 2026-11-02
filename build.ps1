@@ -2,6 +2,11 @@ param([string]$IsccPath)
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { throw 'Install .NET 10 SDK first.' }
+[xml]$projectXml = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'InputFlowStudio.csproj') -Raw
+$appVersion = [string]$projectXml.Project.PropertyGroup.Version
+$installerText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'setup.iss') -Raw
+$installerVersion = [regex]::Match($installerText, '#define\s+MyAppVersion\s+"([^"]+)"').Groups[1].Value
+if ($appVersion -notmatch '^\d+\.\d+\.\d+$' -or $appVersion -ne $installerVersion) { throw 'Project and Inno Setup versions must match (major.minor.patch).' }
 dotnet publish InputFlowStudio.csproj -c Release -r win-x64 --self-contained true -o publish-v2
 if ($LASTEXITCODE -ne 0) { throw 'Publish failed' }
 $iscc = $IsccPath
@@ -30,3 +35,10 @@ if (-not $iscc -or -not (Test-Path -LiteralPath $iscc -PathType Leaf)) {
 }
 & $iscc setup.iss
 if ($LASTEXITCODE -ne 0) { throw 'Installer build failed' }
+
+$assetName = "InputFlowStudio-$appVersion-Setup.exe"
+$assetPath = Join-Path $PSScriptRoot "installer\$assetName"
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'installer\Setup.exe') -Destination $assetPath -Force
+$assetHash = (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+[System.IO.File]::WriteAllText((Join-Path $PSScriptRoot 'installer\SHA256SUMS.txt'), "$assetHash  $assetName" + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
+Write-Output "Release asset: $assetPath"

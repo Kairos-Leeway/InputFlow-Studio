@@ -2,6 +2,9 @@ using System.IO;
 using System.Text.Json;
 namespace InputFlowStudio;
 public sealed class AppSettings {
+ public bool CheckUpdatesOnStartup {get;set;}=true;
+ public DateTimeOffset? LastUpdateCheckUtc {get;set;}
+ public string? SkippedUpdateVersion {get;set;}
  public string Theme {get;set;}="浅色";
  public bool ShowRecordingHints {get;set;}=true;
  public bool ShowMainAfterRecording {get;set;}=true;

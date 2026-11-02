@@ -1,6 +1,7 @@
 param([string]$IsccPath)
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
+& (Join-Path $PSScriptRoot 'packaging\Write-LicenseRtf.ps1')
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { throw 'Install .NET 10 SDK first.' }
 [xml]$projectXml = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'InputFlowStudio.csproj') -Raw
 $appVersion = [string]$projectXml.Project.PropertyGroup.Version

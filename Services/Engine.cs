@@ -1,6 +1,9 @@
 namespace InputFlowStudio;
 public enum EngineState { Idle, Recording, Running, Paused, Stopping }
+public sealed record PlaybackProgress(long CurrentLoop,long CompletedLoops,int TotalLoops);
 public sealed class Engine : IDisposable {
+ PlaybackProgress progress=new(0,0,0);
+ public PlaybackProgress Progress=>Volatile.Read(ref progress);
  readonly IMouseOutput mouse;
  readonly IMouseRecorder recorder;
  readonly IKeyboardOutput keyboard;
@@ -33,6 +36,7 @@ public sealed class Engine : IDisposable {
   var steps=plan.Steps.Select(s=>new Step{Kind=s.Kind,X=s.X,Y=s.Y,Duration=s.Duration,Interval=s.Interval,Wheel=s.Wheel,KeyCode=s.KeyCode,ScanCode=s.ScanCode,Extended=s.Extended,KeyModifiers=s.KeyModifiers}).ToArray();
   if(steps.Any(s=>s.Duration<0||s.Interval<0||!Enum.IsDefined(s.Kind)))throw new InvalidOperationException("步骤耗时和间隔不能为负，操作类型必须有效");
   int loops=plan.Loops,loopDelay=plan.LoopDelay;
+  Volatile.Write(ref progress,new(1,0,loops));
   cancel=new();clock=new(plan.Speed);SetState(EngineState.Running);
   var token=cancel.Token;var timeline=clock;
   try{
@@ -47,6 +51,8 @@ public sealed class Engine : IDisposable {
   void Check()=>timeline.WaitUntil(due,token);
   try{
    for(long loop=0;loops==0||loop<loops;loop++){
+    token.ThrowIfCancellationRequested();
+    Volatile.Write(ref progress,new(loop+1,loop,loops));
     foreach(var step in steps){
      Wait(step.Interval);
      if(step.IsKeyboard){
@@ -75,6 +81,7 @@ public sealed class Engine : IDisposable {
        break;
      }
     }
+    Volatile.Write(ref progress,new(loop+1,loop+1,loops));
     if(loops==0||loop+1<loops){Wait(loopDelay);if(loopDelay==0)token.WaitHandle.WaitOne(1);}
    }
   }finally{ReleaseAll();}

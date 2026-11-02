@@ -17,8 +17,15 @@ public sealed class RecordingOverlay : Window {
   SourceInitialized+=(_,_)=>{var h=new WindowInteropHelper(this).Handle;var style=Native.GetWindowLongPtr(h,-20).ToInt64();Native.SetWindowLongPtr(h,-20,new IntPtr(style|0x20|0x80|0x08000000));};
   Loaded+=(_,_)=>Place();SizeChanged+=(_,_)=>Place();
  }
- public void ShowCountdown(int seconds){countdown=true;heading.Text="准备录制，请将鼠标移至目标位置";count.Visibility=Visibility.Visible;count.Text=seconds.ToString();hint.Text=settings.ShowRecordingHints?$"{settings.Record} / {settings.Stop} 取消录制准备":"";Place();}
- public void ShowRecording(){countdown=false;heading.Text="●  正在录制键鼠操作";count.Visibility=Visibility.Collapsed;hint.Text=$"{settings.Record} 停止录制   ·   {settings.Stop} 紧急停止\n{settings.Run} 运行方案（结束录制后可用）\n{settings.Pause} 暂停 / 恢复（回放时可用）";Place();}
+ public void ShowCountdown(int seconds,bool running=false){countdown=true;heading.Text=running?"准备运行，请切换到目标窗口":"准备录制，请将鼠标移至目标位置";count.Visibility=Visibility.Visible;count.Text=seconds.ToString();hint.Text=running?(settings.ShowRunningHints?$"{settings.Run} / {settings.Stop} 取消运行准备":""):settings.ShowRecordingHints?$"{settings.Record} / {settings.Stop} 取消录制准备":"";Place();}
+ public void ShowRecording(){countdown=false;heading.Foreground=settings.ShowRecordingIndicator?Brushes.Salmon:Brushes.White;heading.Text=settings.ShowRecordingIndicator?"●  正在录制键鼠操作":"录制快捷键";count.Visibility=Visibility.Collapsed;hint.Text=settings.ShowRecordingHints?$"{settings.Record} 停止录制   ·   {settings.Stop} 紧急停止\n{settings.Run} 运行方案（结束录制后可用）\n{settings.Pause} 暂停 / 恢复（回放时可用）":"";Place();}
+ public void ShowRunning(EngineState state,PlaybackProgress progress){
+  countdown=false;count.Visibility=Visibility.Collapsed;
+  heading.Text=settings.ShowRunningIndicator?(state==EngineState.Paused?"Ⅱ  已暂停":state==EngineState.Stopping?"■  正在停止":"●  正在运行方案"):(settings.ShowRunningHints?"运行快捷键":"循环进度");
+  heading.Foreground=!settings.ShowRunningIndicator?Brushes.White:state==EngineState.Paused?Brushes.Gold:state==EngineState.Stopping?Brushes.Salmon:Brushes.MediumSpringGreen;
+  string loops=settings.ShowLoopCounter?$"第 {progress.CurrentLoop} 轮 / {(progress.TotalLoops==0?"无限":progress.TotalLoops.ToString())}  ·  已完成 {progress.CompletedLoops} 轮":"";
+  hint.Text=loops+(settings.ShowRunningHints?(loops.Length>0?"\n":"")+$"{settings.Run} 停止方案   ·   {settings.Stop} 紧急停止\n{settings.Pause} 暂停 / 恢复":"");Place();
+ }
  void Place(){if(PresentationSource.FromVisual(this) is not HwndSource source||source.CompositionTarget==null)return;var matrix=source.CompositionTarget.TransformFromDevice;var topLeft=matrix.Transform(new Point(area.Left,area.Top));var bottomRight=matrix.Transform(new Point(area.Right,area.Bottom));double height=ActualHeight>0?ActualHeight:200;
   if(countdown){Left=(topLeft.X+bottomRight.X-Width)/2;Top=(topLeft.Y+bottomRight.Y-height)/2;}
   else{Left=settings.OverlayCorner.Contains("左")?topLeft.X+18:bottomRight.X-Width-18;Top=settings.OverlayCorner.Contains("下")?bottomRight.Y-height-18:topLeft.Y+18;}

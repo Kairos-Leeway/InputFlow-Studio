@@ -34,23 +34,24 @@ public class MainViewModel : INotifyPropertyChanged {
  }}
  public Plan? RecordingTarget {get;set;}
  public Engine Engine {get;}
- bool countingDown;
+ bool countingDown,runCountingDown;
+ public bool IsRunCountingDown {get=>runCountingDown;set{runCountingDown=value;NotifyState();}}
  public bool IsCountingDown {get=>countingDown;set{countingDown=value;NotifyState();}}
  public AppSettings Settings {get;private set;}=new();
  public void ApplySettings(AppSettings settings){Settings=settings;NotifyState();}
- public bool CanEdit=>Engine.State==EngineState.Idle&&!IsCountingDown;
- public bool CanRecord=>Selected!=null&&(IsCountingDown||Engine.State is EngineState.Idle or EngineState.Recording);
- public bool CanRun=>!IsCountingDown&&Selected!=null&&(Engine.State is EngineState.Running or EngineState.Paused||(CanEdit&&Selected.Steps.Count>0));
+ public bool CanEdit=>Engine.State==EngineState.Idle&&!IsCountingDown&&!IsRunCountingDown;
+ public bool CanRecord=>!IsRunCountingDown&&Selected!=null&&(IsCountingDown||Engine.State is EngineState.Idle or EngineState.Recording);
+ public bool CanRun=>!IsCountingDown&&Selected!=null&&(IsRunCountingDown||Engine.State is EngineState.Running or EngineState.Paused||(CanEdit&&Selected.Steps.Count>0));
  public bool CanPause=>Engine.State is EngineState.Running or EngineState.Paused;
- public bool CanChangeSpeed=>!IsCountingDown&&Selected!=null&&Engine.State is not (EngineState.Recording or EngineState.Stopping);
+ public bool CanChangeSpeed=>!IsCountingDown&&!IsRunCountingDown&&Selected!=null&&Engine.State is not (EngineState.Recording or EngineState.Stopping);
  public string RecordText=>IsCountingDown?$"取消准备   {Settings.Record}":Engine.Recording?$"■  停止录制   {Settings.Record}":$"●  录制   {Settings.Record}";
- public string RunText=>Engine.State==EngineState.Stopping?"正在停止…":Engine.Running?$"■  停止方案   {Settings.Run}":$"▶  运行方案   {Settings.Run}";
+ public string RunText=>IsRunCountingDown?$"取消运行准备   {Settings.Run}":Engine.State==EngineState.Stopping?"正在停止…":Engine.Running?$"■  停止方案   {Settings.Run}":$"▶  运行方案   {Settings.Run}";
  public string PauseText=>Engine.Paused?$"▶  恢复   {Settings.Pause}":$"Ⅱ  暂停   {Settings.Pause}";
  public string AddText=>$"＋  添加步骤   {Settings.Add}";
  public string ToolbarHint=>$"{Settings.Stop} 紧急停止 · {Settings.Pick} 拾取坐标";
  public string StopHint=>$"{Settings.Stop} 随时停止并释放按键";
  public string EmptyHint=>Selected?.Steps.Count>0?"没有匹配的步骤，请切换全部步骤或清空搜索":$"添加步骤，或按 {Settings.Record} 开始录制";
- public string StateText=>IsCountingDown?$"正在准备录制 · {Settings.Stop} 取消":Engine.State switch {EngineState.Recording=>$"录制中 · {Settings.Record} 完成，{Settings.Stop} 紧急停止",EngineState.Running=>$"运行中 · {Settings.Run} 停止，{Settings.Pause} 暂停",EngineState.Paused=>$"已暂停 · {Settings.Pause} 恢复，{Settings.Run} 停止",EngineState.Stopping=>"正在停止并释放鼠标按键…",_=>"就绪"};
+ public string StateText=>IsRunCountingDown?$"正在准备运行 · {Settings.Stop} 取消":IsCountingDown?$"正在准备录制 · {Settings.Stop} 取消":Engine.State switch {EngineState.Recording=>$"录制中 · {Settings.Record} 完成，{Settings.Stop} 紧急停止",EngineState.Running=>$"运行中 · {Settings.Run} 停止，{Settings.Pause} 暂停",EngineState.Paused=>$"已暂停 · {Settings.Pause} 恢复，{Settings.Run} 停止",EngineState.Stopping=>"正在停止并释放鼠标按键…",_=>"就绪"};
  public ICollectionView? StepsView {get;private set;}
  bool executionExpanded=true;
  public bool IsExecutionExpanded {get=>executionExpanded;set{executionExpanded=value;Notify(nameof(IsExecutionExpanded));}}
@@ -104,7 +105,7 @@ public class MainViewModel : INotifyPropertyChanged {
  public string UniqueName(string name)=>PlanNames.Unique(Plans.Concat(Plans.Select(p=>new Plan{Name=Edits.SavedName(p)})),name);
  public void Save(){FlushCapture();if(Selected==null)return;PlanNames.ValidateAll(Plans);var current=Selected;var next=WithReplacement(current,Clone(current)).ToArray();PlanNames.ValidateAll(next);store.Save(next);Edits.AcceptSaved(current);}
  public void SaveAll(){FlushCapture();PlanNames.ValidateAll(Plans);store.Save(Plans);foreach(var plan in Plans)Edits.AcceptSaved(plan);}
- public async Task<bool> RunSelectedAsync(Action? saved=null,Func<bool>? confirmSave=null,Action? starting=null){if(!CanRun||Engine.Running)return false;Engine.ValidatePlan(Selected!);if(HasUnsaved){if(confirmSave==null||!confirmSave())return false;Save();saved?.Invoke();}starting?.Invoke();await Engine.Run(Selected!);return true;}
+ public async Task<bool> RunSelectedAsync(Action? saved=null,Func<bool>? confirmSave=null,Action? starting=null,Func<Task<bool>>? preparing=null){if(!CanRun||Engine.Running)return false;Engine.ValidatePlan(Selected!);if(HasUnsaved){if(confirmSave==null||!confirmSave())return false;Save();saved?.Invoke();}if(preparing!=null&&!await preparing())return false;starting?.Invoke();await Engine.Run(Selected!);return true;}
  public string? NameError(string value,Plan? except=null){try{PlanNames.Validate(Plans,value,except);PlanNames.Validate(Plans.Where(p=>p!=except).Select(p=>new Plan{Name=Edits.SavedName(p)}),value);return null;}catch(ArgumentException ex){return ex.Message;}}
  public Plan CreateNewPlan(string suggestion="新方案"){var plan=Settings.CreatePlan();plan.Name=UniqueName(suggestion);AddPlan(plan);return plan;}
  public void AddPlan(Plan plan){plan.Name=UniqueName(plan.Name);store.Save(SavedVersions().Append(plan));Plans.Add(plan);Edits.Attach(plan);Selected=plan;}

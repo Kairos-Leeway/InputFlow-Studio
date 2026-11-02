@@ -8,6 +8,7 @@ public partial class MainWindow : Window {
  readonly MainViewModel vm;
  readonly RecordingPreparation preparation;
  readonly bool showRecordingUi;
+ readonly System.Windows.Threading.DispatcherTimer progressTimer=new(){Interval=TimeSpan.FromMilliseconds(100)};
  readonly IPlanDialogs dialogs;
  readonly System.Windows.Threading.DispatcherTimer noticeTimer=new(){Interval=TimeSpan.FromSeconds(6)};
  RecordingDraft? recordingSession;
@@ -25,16 +26,17 @@ public partial class MainWindow : Window {
   vm=model;this.preparation=preparation??new();this.showRecordingUi=showRecordingUi;this.dialogs=dialogs??new PlanDialogs(this,()=>vm.Settings.Theme=="浅色");
   InitializeComponent();vm.ApplySettings(settings??new());SetTheme(vm.Settings.Theme=="浅色",false);DataContext=vm;Kinds.ItemsSource=Enum.GetValues<ActionKind>();InitializeUpdates();
   vm.Engine.StateChanged+=()=>{if(Dispatcher.CheckAccess())EngineChanged();else Dispatcher.InvokeAsync(EngineChanged);};
+  progressTimer.Tick+=(_,_)=>RefreshRunOverlay();
   noticeTimer.Tick+=(_,_)=>{Notice.Visibility=Visibility.Collapsed;noticeTimer.Stop();};
   SourceInitialized+=(_,_)=>{if(showRecordingUi)tray=new TrayService(()=>Dispatcher.InvokeAsync(ShowMain),()=>Dispatcher.InvokeAsync(Close));handle=new WindowInteropHelper(this).Handle;HwndSource.FromHwnd(handle).AddHook(Hook);hotkeys=new(new NativeHotkeyRegistry(handle));Bind();try{hotkeyGate=new HotkeyOriginGate(()=>hotkeys.Active,emergencyStop:()=>Dispatcher.InvokeAsync(()=>Stop(this,new RoutedEventArgs())));}catch(Exception ex){ShowNotice(ex.Message,true);}};
   Closing+=ClosingWindow;
  }
- void ClosingWindow(object? sender,System.ComponentModel.CancelEventArgs e){lastCloseFailed=false;closing=true;preparation.Cancel();try{InputValidation.Commit(this);vm.Engine.Dispose();PersistRecording();if(vm.AnyUnsaved){var choice=Ask(()=>dialogs.ResolveUnsaved("退出",vm.Plans.Count(p=>p.IsDirty),true));if(choice==UnsavedDecision.Cancel){e.Cancel=true;closing=false;ShowMain();return;}if(choice==UnsavedDecision.Save)vm.SaveAll();}overlay?.Close();overlay=null;hotkeyGate?.Dispose();hotkeys?.Dispose();tray?.Dispose();noticeTimer.Stop();}catch(Exception ex){lastCloseFailed=true;e.Cancel=true;closing=false;ShowMain();ShowNotice("退出前保存失败，应用已保留打开："+ex.Message,true);}}
+ void ClosingWindow(object? sender,System.ComponentModel.CancelEventArgs e){lastCloseFailed=false;closing=true;preparation.Cancel();try{InputValidation.Commit(this);vm.Engine.Dispose();PersistRecording();if(vm.AnyUnsaved){var choice=Ask(()=>dialogs.ResolveUnsaved("退出",vm.Plans.Count(p=>p.IsDirty),true));if(choice==UnsavedDecision.Cancel){e.Cancel=true;closing=false;ShowMain();return;}if(choice==UnsavedDecision.Save)vm.SaveAll();}overlay?.Close();overlay=null;hotkeyGate?.Dispose();hotkeys?.Dispose();tray?.Dispose();noticeTimer.Stop();progressTimer.Stop();}catch(Exception ex){lastCloseFailed=true;e.Cancel=true;closing=false;ShowMain();ShowNotice("退出前保存失败，应用已保留打开："+ex.Message,true);}}
  void ShowMain(){if(closing)return;if(WindowState==WindowState.Minimized)WindowState=WindowState.Normal;if(!IsVisible)Show();Activate();}
  void ShowNotice(string text,bool error=false){Status.Text=text;NoticeText.Text=text;Notice.SetResourceReference(System.Windows.Controls.Border.BorderBrushProperty,error?"RecordInk":"Accent");Notice.Visibility=Visibility.Visible;noticeTimer.Stop();noticeTimer.Start();}
  void DismissNotice(object s,RoutedEventArgs e){Notice.Visibility=Visibility.Collapsed;noticeTimer.Stop();}
  T Ask<T>(Func<T> action){hotkeys?.Suspend();modalOpen=true;try{return action();}finally{modalOpen=false;try{hotkeys?.Resume();}catch(Exception ex){ShowNotice(ex.Message,true);}}}
- void EngineChanged(){Status.Text=vm.StateText;if(vm.Engine.State==EngineState.Idle&&recordingStarted){recordingStarted=false;try{PersistRecording();RestoreRecordingUi(false);}catch(Exception ex){RestoreRecordingUi(true);ShowNotice("录制已保留在内存，保存失败，请点击保存重试："+ex.Message,true);}}}
+ void EngineChanged(){if(vm.Engine.Running)vm.IsRunCountingDown=false;Status.Text=vm.StateText;RefreshRunOverlay();if(vm.Engine.State==EngineState.Idle&&recordingStarted){recordingStarted=false;try{PersistRecording();RestoreRecordingUi(false);}catch(Exception ex){RestoreRecordingUi(true);ShowNotice("录制已保留在内存，保存失败，请点击保存重试："+ex.Message,true);}}}
  void PersistRecording(){if(recordingSession==null)return;bool saved=vm.CommitRecording(recordingSession);string name=recordingSession.Destination==RecordingDestination.NewPlan?recordingSession.Draft.Name:recordingSession.Original.Name;recordingSession=null;ShowNotice(saved?$"录制完成，已保存“{name}”":"没有录到键鼠操作，已保留原方案");}
 
  void Bind(){try{hotkeys?.Apply(vm.Settings,vm.Plans);}catch(Exception ex){Status.Text=ex.Message;}}
@@ -44,7 +46,7 @@ public partial class MainWindow : Window {
  }return IntPtr.Zero;}
  void Pick(){if(!vm.CanEdit||Steps.SelectedItem is not Step step)return;if(step.IsKeyboard){ShowNotice("键盘步骤无需坐标，请使用按键输入框");return;}Native.GetCursorPos(out var point);vm.PickCoordinates(point.X,point.Y);ShowNotice("坐标已暂存到编辑稿，橙色边框表示未保存；可单项还原或撤回");}
  async void Record(object sender,RoutedEventArgs e){
-  if(preparation.IsPending){preparation.Cancel();return;}
+  if(vm.IsCountingDown&&preparation.IsPending){preparation.Cancel();return;}
   if(!vm.CanRecord)return;
   if(vm.Engine.Recording){Stop(sender,e);return;}
   bool started=false;RecordingDraft? staged=null;
@@ -53,19 +55,36 @@ public partial class MainWindow : Window {
    var decision=vm.NeedsRecordingChoice?Ask(()=>dialogs.ChooseRecording(vm.Selected!,vm.UniqueName(vm.Selected!.Name+" 录制"),(value,mode)=>vm.NameError(value,mode==RecordingDestination.Overwrite?vm.Selected:null))):new RecordingDecision(RecordingDestination.Overwrite,vm.Selected!.Name);
    if(decision.Destination==RecordingDestination.Cancel)return;
    staged=vm.BeginRecordingDraft(decision);recordingSession=staged;vm.IsCountingDown=true;Status.Text=vm.StateText;
-   if(showRecordingUi){recordingUiActive=true;restoreState=WindowState;if(vm.Settings.HideMainWindow)Hide();if(vm.Settings.CountdownSeconds>0||vm.Settings.ShowRecordingHints){overlay=new(vm.Settings);if(vm.Settings.CountdownSeconds>0)overlay.ShowCountdown(vm.Settings.CountdownSeconds);else overlay.ShowRecording();overlay.Show();}}
+   if(showRecordingUi){recordingUiActive=true;restoreState=WindowState;if(vm.Settings.HideMainWindow)Hide();if(vm.Settings.CountdownSeconds>0||vm.Settings.ShowRecordingHints||vm.Settings.ShowRecordingIndicator){overlay=new(vm.Settings);if(vm.Settings.CountdownSeconds>0)overlay.ShowCountdown(vm.Settings.CountdownSeconds);else overlay.ShowRecording();overlay.Show();}}
    bool ready=await preparation.Run(seconds=>overlay?.ShowCountdown(seconds),vm.Settings.CountdownSeconds);
    if(!ready||closing)return;
-   vm.Engine.Record(handle,vm.Settings.RecordMovement,vm.Settings.RecordKeyboard,vm.Settings.IncludeControlHotkeys,HotkeyManager.Build(vm.Settings,vm.Plans).Select(binding=>binding.Shortcut).ToArray(),Shortcut.Parse(vm.Settings.Stop));recordingStarted=true;started=true;if(vm.Settings.ShowRecordingHints)overlay?.ShowRecording();else{overlay?.Close();overlay=null;}
+   vm.Engine.Record(handle,vm.Settings.RecordMovement,vm.Settings.RecordKeyboard,vm.Settings.IncludeControlHotkeys,HotkeyManager.Build(vm.Settings,vm.Plans).Select(binding=>binding.Shortcut).ToArray(),Shortcut.Parse(vm.Settings.Stop));recordingStarted=true;started=true;if(vm.Settings.ShowRecordingHints||vm.Settings.ShowRecordingIndicator)overlay?.ShowRecording();else{overlay?.Close();overlay=null;}
   }catch(Exception ex){ShowNotice("录制未开始："+ex.Message,true);}
   finally{vm.IsCountingDown=false;if(!started){if(recordingSession==staged){recordingSession=null;vm.RecordingTarget=null;}RestoreRecordingUi(true);if(!closing&&Status.Text.StartsWith("正在准备"))ShowNotice("已取消录制准备，原方案保持不变");}else Status.Text=vm.StateText;}
  }
  void RestoreRecordingUi(bool force){overlay?.Close();overlay=null;if(recordingUiActive&&!closing&&(force||vm.Settings.ShowMainAfterRecording)){WindowState=restoreState==WindowState.Minimized?WindowState.Normal:restoreState;ShowMain();}recordingUiActive=false;}
+ void RefreshRunOverlay(){if(vm.Engine.Running){overlay?.ShowRunning(vm.Engine.State,vm.Engine.Progress);}}
  async void Run(object s,RoutedEventArgs e){
+  if(vm.IsRunCountingDown){preparation.Cancel();return;}
   if(!vm.CanRun)return;if(vm.Engine.Running){Stop(s,e);return;}bool hiddenForRun=false;var previousState=WindowState;
-  try{InputValidation.Commit(this);PersistRecording();if(showRecordingUi&&vm.Selected!.Steps.Any(step=>step.IsKeyboard)&&hotkeyGate==null)throw new InvalidOperationException("键盘回放保护未就绪，请重新启动应用");bool ran=await vm.RunSelectedAsync(()=>ShowNotice($"已保存“{vm.Selected!.Name}”，开始运行"),()=>Ask(()=>dialogs.ResolveUnsaved("运行",1,false))==UnsavedDecision.Save,()=>{if(showRecordingUi&&vm.Settings.HideWhenRunning){hiddenForRun=true;Hide();}});Status.Text=ran?"方案已结束":"已取消运行，修改仍保留在编辑稿";}
-  catch(Exception ex){ShowNotice("未能运行："+ex.Message,true);}
-  finally{if(hiddenForRun&&!closing){WindowState=previousState==WindowState.Minimized?WindowState.Normal:previousState;ShowMain();}}
+  try{
+   InputValidation.Commit(this);PersistRecording();
+   if(showRecordingUi&&vm.Selected!.Steps.Any(step=>step.IsKeyboard)&&hotkeyGate==null)throw new InvalidOperationException("键盘回放保护未就绪，请重新启动应用");
+   bool ran=await vm.RunSelectedAsync(()=>ShowNotice($"已保存“{vm.Selected!.Name}”，开始运行"),()=>Ask(()=>dialogs.ResolveUnsaved("运行",1,false))==UnsavedDecision.Save,preparing:async()=>{
+    vm.IsRunCountingDown=true;Status.Text=vm.StateText;
+    int seconds=vm.Settings.EnableRunCountdown?vm.Settings.RunCountdownSeconds:0;
+    if(showRecordingUi){
+     if(vm.Settings.HideWhenRunning){hiddenForRun=true;Hide();}
+     if(seconds>0||vm.Settings.ShowRunningIndicator||vm.Settings.ShowRunningHints||vm.Settings.ShowLoopCounter){overlay=new(vm.Settings);if(seconds>0){overlay.ShowCountdown(seconds,true);overlay.Show();}}
+    }
+    bool ready=await preparation.Run(value=>overlay?.ShowCountdown(value,true),seconds);
+    if(!ready||closing)return false;
+    if(showRecordingUi&&overlay!=null){if(vm.Settings.ShowRunningIndicator||vm.Settings.ShowRunningHints||vm.Settings.ShowLoopCounter){overlay.ShowRunning(EngineState.Running,new(1,0,vm.Selected!.Loops));if(!overlay.IsVisible)overlay.Show();progressTimer.Start();}else{overlay.Close();overlay=null;}}
+    return true;
+   });
+   Status.Text=ran?$"方案已结束 · 已完成 {vm.Engine.Progress.CompletedLoops} 轮":"已取消运行准备";
+  }catch(Exception ex){ShowNotice("未能运行："+ex.Message,true);}
+  finally{vm.IsRunCountingDown=false;progressTimer.Stop();overlay?.Close();overlay=null;if(hiddenForRun&&!closing){WindowState=previousState==WindowState.Minimized?WindowState.Normal:previousState;ShowMain();}}
  }
  void Stop(object s,RoutedEventArgs e){if(preparation.IsPending){preparation.Cancel();return;}try{vm.Engine.Stop();if(vm.Engine.Running)Status.Text=vm.StateText;else if(recordingSession==null&&Status.Text=="就绪")Status.Text="已停止";}catch(Exception ex){ShowNotice(ex.Message,true);}}
  void Pause(object s,RoutedEventArgs e){if(!vm.CanPause)return;vm.Engine.Paused=!vm.Engine.Paused;Status.Text=vm.StateText;}

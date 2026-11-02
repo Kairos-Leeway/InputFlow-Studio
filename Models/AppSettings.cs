@@ -2,6 +2,12 @@ using System.IO;
 using System.Text.Json;
 namespace InputFlowStudio;
 public sealed class AppSettings {
+ public bool EnableRunCountdown {get;set;}=true;
+ public int RunCountdownSeconds {get;set;}=3;
+ public bool ShowRunningHints {get;set;}=true;
+ public bool ShowRecordingIndicator {get;set;}=true;
+ public bool ShowRunningIndicator {get;set;}=true;
+ public bool ShowLoopCounter {get;set;}=true;
  public bool CheckUpdatesOnStartup {get;set;}=true;
  public DateTimeOffset? LastUpdateCheckUtc {get;set;}
  public string? SkippedUpdateVersion {get;set;}
@@ -19,6 +25,7 @@ public sealed class AppSettings {
  public int DefaultLoopDelay {get;set;}=500;
  public double DefaultSpeed {get;set;}=1;
  public void Validate(){
+  if(RunCountdownSeconds<1||RunCountdownSeconds>10)throw new ArgumentException("运行倒计时范围为 1–10 秒");
   if(CountdownSeconds<0||CountdownSeconds>10)throw new ArgumentException("倒计时范围为 0–10 秒");
   if(!double.IsFinite(OverlayOpacity)||OverlayOpacity<.4||OverlayOpacity>1)throw new ArgumentException("浮层透明度范围为 0.4–1");
   if(DefaultLoops<0||DefaultLoopDelay<0||!double.IsFinite(DefaultSpeed)||DefaultSpeed<.1||DefaultSpeed>10)throw new ArgumentException("默认次数和间隔不能为负，默认倍速范围为 0.1–10");
